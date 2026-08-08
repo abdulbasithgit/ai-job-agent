@@ -5,11 +5,15 @@ import { parseUserProfile, type UserProfile } from '../models/userProfile';
 
 dotenv.config();
 
+export type JobProvider = 'mock';
+
 export interface AppConfig {
   nodeEnv: string;
   logLevel: string;
   userProfilePath: string;
   userProfile: UserProfile;
+  jobProvider: JobProvider;
+  maxJobsPerSearch: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -25,7 +29,24 @@ export function loadConfig(): AppConfig {
     logLevel,
     userProfilePath,
     userProfile: loadUserProfile(userProfilePath),
+    jobProvider: parseJobProvider(process.env.JOB_PROVIDER),
+    maxJobsPerSearch: parsePositiveInt(process.env.MAX_JOBS_PER_SEARCH, 50),
   };
+}
+
+function parseJobProvider(value: string | undefined): JobProvider {
+  const provider = (value ?? 'mock').trim().toLowerCase();
+  if (provider === 'mock') return 'mock';
+  throw new Error(`Unsupported JOB_PROVIDER "${provider}". Supported values: mock`);
+}
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (value === undefined || value.trim() === '') return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, received "${value}"`);
+  }
+  return parsed;
 }
 
 function loadUserProfile(filePath: string): UserProfile {

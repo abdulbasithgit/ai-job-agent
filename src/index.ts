@@ -1,11 +1,13 @@
 import { loadConfig } from './config/config';
+import { formatSalary, type JobSearchCriteria } from './models/job';
+import { createJobSearchService } from './services/jobSearchServiceFactory';
 import { Logger, parseLogLevel } from './utils/logger';
 
-function main(): void {
+async function main(): Promise<void> {
   const config = loadConfig();
   const logger = new Logger(parseLogLevel(config.logLevel));
 
-  logger.info('AI Job Agent starting (Phase 1)');
+  logger.info('AI Job Agent starting (Phase 2)');
   logger.info(`Environment: ${config.nodeEnv}`);
   logger.info(`Profile loaded from: ${config.userProfilePath}`);
 
@@ -13,14 +15,27 @@ function main(): void {
   logger.info(`User: ${profile.name} (${profile.experienceYears} years experience)`);
   logger.info(`Skills: ${profile.skills.join(', ')}`);
   logger.info(`Preferred locations: ${profile.preferredLocations.join(', ')}`);
-  logger.info(`Preferred roles: ${profile.preferredRoles.join(', ')}`);
-  logger.info('Phase 1 complete: config, profile and logging are working');
+
+  const jobSearchService = createJobSearchService(config, logger);
+  const criteria: JobSearchCriteria = {
+    keywords: profile.keywords,
+    locations: profile.preferredLocations,
+    limit: config.maxJobsPerSearch,
+  };
+
+  logger.info(`Searching jobs via "${jobSearchService.name}" provider...`);
+  const jobs = await jobSearchService.searchJobs(criteria);
+  logger.info(`Found ${jobs.length} jobs`);
+
+  for (const job of jobs) {
+    logger.info(`- ${job.title} | ${job.company} | ${job.location} | ${formatSalary(job.salary)}`);
+  }
+
+  logger.info('Phase 2 complete: job model and job search provider are working');
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`${new Date().toISOString()} [ERROR] Startup failed: ${message}`);
+  console.error(`${new Date().toISOString()} [ERROR] Agent failed: ${message}`);
   process.exitCode = 1;
-}
+});
