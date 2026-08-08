@@ -1,37 +1,37 @@
 import { loadConfig } from './config/config';
-import { formatSalary, type JobSearchCriteria } from './models/job';
+import type { JobSearchCriteria } from './models/job';
 import { createJobSearchService } from './services/jobSearchServiceFactory';
+import { formatJobList } from './utils/jobFormatter';
 import { Logger, parseLogLevel } from './utils/logger';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = new Logger(parseLogLevel(config.logLevel));
-
-  logger.info('AI Job Agent starting (Phase 2)');
-  logger.info(`Environment: ${config.nodeEnv}`);
-  logger.info(`Profile loaded from: ${config.userProfilePath}`);
-
   const profile = config.userProfile;
-  logger.info(`User: ${profile.name} (${profile.experienceYears} years experience)`);
-  logger.info(`Skills: ${profile.skills.join(', ')}`);
-  logger.info(`Preferred locations: ${profile.preferredLocations.join(', ')}`);
 
-  const jobSearchService = createJobSearchService(config, logger);
+  logger.info('🤖 AI Job Agent starting...');
+  logger.info(`👤 Profile: ${profile.name} (${profile.experienceYears} years experience)`);
+
   const criteria: JobSearchCriteria = {
     keywords: profile.keywords,
     locations: profile.preferredLocations,
-    limit: config.maxJobsPerSearch,
   };
 
-  logger.info(`Searching jobs via "${jobSearchService.name}" provider...`);
-  const jobs = await jobSearchService.searchJobs(criteria);
-  logger.info(`Found ${jobs.length} jobs`);
+  logger.info(`🔎 Searching mock jobs via "${config.jobProvider}" provider...`);
+  logger.info(`🔍 Keywords: ${criteria.keywords.join(', ')}`);
+  logger.info(`📍 Locations: ${criteria.locations.join(', ')}`);
 
-  for (const job of jobs) {
-    logger.info(`- ${job.title} | ${job.company} | ${job.location} | ${formatSalary(job.salary)}`);
+  const jobSearchService = createJobSearchService(config);
+  const jobs = await jobSearchService.searchJobs(criteria);
+  logger.info(`✅ Found ${jobs.length} jobs`);
+
+  if (jobs.length > 0) {
+    logger.info(`📋 Jobs found:\n\n${formatJobList(jobs)}`);
+  } else {
+    logger.warn('No jobs matched the search criteria. Try widening keywords or locations.');
   }
 
-  logger.info('Phase 2 complete: job model and job search provider are working');
+  logger.info('Phase 2 complete: job model, mock data and job search service are working');
 }
 
 main().catch((error: unknown) => {

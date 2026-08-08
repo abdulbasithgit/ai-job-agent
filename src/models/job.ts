@@ -14,12 +14,12 @@ export interface Job {
 export interface JobSearchCriteria {
   keywords: string[];
   locations: string[];
-  limit?: number;
 }
 
 /**
  * Normalizes a job URL so the same posting is recognized across runs and providers:
- * lowercased host, no protocol, no query string, no trailing slash.
+ * lowercased host, no protocol, no "www.", no query string, no trailing slash.
+ * Used later as the unique key that stops a job being emailed twice.
  */
 export function normalizeJobUrl(url: string): string {
   const trimmed = url.trim();

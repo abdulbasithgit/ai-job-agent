@@ -15,7 +15,7 @@ We build this in 10 phases. **This repository currently contains Phase 1 only.**
 |-------|-------------|--------|
 | 1 | Node.js + TypeScript skeleton, config, user profile, logger | ✅ done |
 | 2 | Mock job data + `JobSearchService` abstraction | ✅ done |
-| 3 | Deterministic ranking + duplicate detection | pending |
+| 3 | Job matching against the profile + duplicate detection | pending |
 | 4 | LLM integration (`AI_PROVIDER=mock \| openai`, later `ollama`) | pending |
 | 5 | Agent workflow (`runJobAgent()`) | pending |
 | 6 | PostgreSQL storage (jobs, evaluations, agent runs) | pending |
@@ -171,130 +171,221 @@ You will know you understand Phase 1 when you can answer: *why does the profile 
 
 ---
 
-## Phase 2 — the `Job` model and the job search abstraction
+## Phase 2 — mock job data and the job search service
 
 ### 1. What Phase 2 does
 
-The app now **fetches jobs**. On top of Phase 1 it adds:
+The app can now **find jobs**. On top of Phase 1 it adds:
 
-- a `Job` type (the shape of one posting) and a `JobSearchCriteria` type (what we are looking for),
+- a `Job` model and a `JobSearchCriteria` model,
 - a `JobSearchService` **interface** — the contract any job source must satisfy,
-- `MockJobSearchService` — 20 sample postings, returned asynchronously,
+- `MockJobSearchService` — searches 12 sample postings by keyword and location,
 - a small factory that picks the provider from `JOB_PROVIDER`,
-- two helpers: `normalizeJobUrl()` (for Phase 3 duplicate detection) and `formatSalary()`.
+- a console formatter and 12 unit tests.
 
-Running `npm run agent` now prints all 20 jobs. No AI, no filtering, no database yet.
+No real job site, no scraping, no AI, no database, no email yet — those are later phases.
+
+```text
+User profile (config/profile.json)
+          ↓  keywords + locations
+   JobSearchService (interface)
+          ↓
+   MockJobSearchService  →  src/data/mockJobs.ts
+          ↓
+        Job[]  →  printed to the console
+```
 
 ### 2. Why we need it
 
-Two reasons, and both are about **not getting stuck later**.
+- **Testability.** Real job boards need API keys, rate-limit you, change their markup, and scraping most of them
+  breaks their terms. If the agent depended on one now, you could never run it 50 times in an afternoon while
+  learning. The mock provider makes the whole agent runnable offline, instantly, for free, with *the same data every
+  time* — exactly what you want when debugging ranking and prompts later.
+- **Replaceability.** The rest of the agent depends on the **interface**, never on the mock (see section 10).
 
-- **Testability.** Real job boards are rate-limited, need API keys, change their HTML, and are often off-limits
-  to scrapers. If the agent depended on one now, you could never run it 50 times in an afternoon while learning.
-  A mock provider makes the whole agent runnable offline, instantly, for free, with *the same data every time* —
-  which is exactly what you want when debugging ranking and prompts.
-- **Replaceability.** The agent will depend on the **interface**, never on the mock. Swapping in a real provider
-  later is one new class plus one line in the factory. This is dependency inversion, and it's the single most
-  useful design idea in this project.
-
-The sample data is deliberately **messy**, because clean data teaches you nothing:
-
-- 4 of the 20 are duplicates of earlier postings — same job, different URL (tracking query string, `www.`,
-  uppercase host, trailing slash). Phase 3 must catch all four.
-- Several are bad matches on purpose (Java/Spring, WordPress/PHP, Python ML, on-site Dubai). A good agent must
-  *reject* jobs, not just rank them.
-
-### 3. How it works
+### 3. Project structure after Phase 2
 
 ```text
-config.jobProvider ("mock")
-        │
-        ▼
-createJobSearchService()            ← factory: config value → concrete class
-        │ returns JobSearchService   ← interface, the only thing index.ts knows about
-        ▼
-MockJobSearchService.searchJobs(criteria)
-        │  (50ms fake latency, then a deep copy of MOCK_JOBS)
-        ▼
-   Job[]  →  logged by index.ts
+src/
+├── config/config.ts                     env + profile loading (Phase 1)
+├── models/
+│   ├── job.ts                           Job, JobSearchCriteria, helpers
+│   └── userProfile.ts                   UserProfile (Phase 1)
+├── data/
+│   └── mockJobs.ts                      12 sample jobs (data only)
+├── services/
+│   ├── jobSearchService.ts              the interface
+│   ├── mockJobSearchService.ts          the mock implementation
+│   └── jobSearchServiceFactory.ts       JOB_PROVIDER → concrete class
+├── utils/
+│   ├── logger.ts                        logging (Phase 1)
+│   └── jobFormatter.ts                  turns Job[] into readable text
+└── index.ts                             coordinates: load → search → print
+
+tests/
+└── mockJobSearchService.test.ts         12 unit tests
 ```
 
-New files:
+**`models/job.ts` — what is a model/interface?**
+A model describes the *shape* of your data: a `Job` always has a `title`, a `company`, a `url`, and so on. A
+TypeScript `interface` is a compile-time description only — it produces no JavaScript. Its value is that the compiler
+now rejects `job.tittle` or a job missing `company` *before* you run anything. One shared model means the search
+service, the AI service, the database and the email template all agree on what a job is.
 
-- **`src/models/job.ts`** — `Job`, `JobSearchCriteria`, plus:
-  - `normalizeJobUrl()` — strips protocol, `www.`, query string and trailing slash, lowercases the host, so
-    `https://JOBS.example.com/a/b/?utm_source=x` and `https://jobs.example.com/a/b` become the same key. This is
-    the unique identifier we will use in Postgres to guarantee a job is never emailed twice.
-  - `formatSalary()` — returns `"Salary information unavailable"` when salary is missing. The rule "never invent
-    missing information" is enforced in **code**, not left to the LLM's good behaviour.
-- **`src/services/jobSearchService.ts`** — the interface. ~5 lines, and the most important file in the phase.
-- **`src/services/mockJobs.ts`** — the 20 sample postings (data, not logic).
-- **`src/services/mockJobSearchService.ts`** — the mock implementation. It is `async` and adds 50 ms of fake
-  latency so callers must treat job search as real I/O; it returns **copies** so no caller can mutate the fixture.
-  It intentionally does **not** filter — a real board also hands you junk; filtering is the agent's job.
-- **`src/services/jobSearchServiceFactory.ts`** — maps `JOB_PROVIDER` to a class. The `never` assignment in the
-  `default` branch makes TypeScript fail the build if you add a provider to the union and forget to handle it here.
+This file also holds two tiny helpers:
 
-Changed files: `config.ts` gains `jobProvider` and `maxJobsPerSearch`; `index.ts` is now `async` and performs a
-search; `.env.example` documents the two new variables.
+- `normalizeJobUrl()` — lowercases the host and strips `https://`, `www.`, the query string and any trailing slash,
+  so `https://EXAMPLE.com/job/2/?utm_source=news` and `https://example.com/job/2` produce the same key. That key
+  becomes the unique index in Postgres (Phase 6) that guarantees a job is never emailed twice.
+- `formatSalary()` — returns `"Salary information unavailable"` when a salary is missing. The rule "never invent
+  missing information" is enforced in **code**, not left to the LLM's good behaviour.
 
-### 4. Where it fits in the agent architecture
+**`data/mockJobs.ts` — why fake jobs?**
+So the agent has something to work on without the internet. Data lives in `data/`, separate from `services/`, because
+it is *just data* — no logic. The 12 postings are a deliberate mixture: Angular, React, TypeScript, JavaScript,
+Node.js, Full Stack, AI/LLM, plus a Java/Spring Boot role and a Python ML role that **should not** match well, and
+locations across Riyadh, Jeddah, Dammam, Dhahran and Remote. Fake companies, `https://example.com/job/N` URLs, no
+real personal data.
 
-`JobSearchService` is the agent's first **tool** — its way of perceiving the outside world. Later phases add more
-tools (database, LLM, SMTP). The agent code will only ever talk to interfaces, which is why we can start with a mock
-and a `mock` LLM and still end up with a real system.
+**`services/jobSearchService.ts` — why a service?**
+A service holds behaviour ("how do I find jobs?"), keeping it out of both the data and the entry point. This file is
+only the **interface** — the promise that any job source will expose `searchJobs(criteria): Promise<Job[]>`.
+
+**`MockJobSearchService` — why a class?**
+Because a job source has *identity and state*: which list of jobs it searches (`constructor(jobs = MOCK_JOBS)`), and
+later an API key, a base URL, an HTTP client, a rate limiter. A class bundles that state with its behaviour and lets
+us say `implements JobSearchService`, so the compiler verifies the contract. The injectable constructor is also why
+the tests can search a tiny custom job list instead of the real fixture.
+
+**`index.ts` — why only coordination?**
+`index.ts` is the *wiring*, not the *work*: load config → create the service → call it → print. All the real logic
+sits in testable modules. If business logic lived in `index.ts` you could not unit-test it (it runs on import), you
+could not reuse it from the scheduler in Phase 8, and the file would grow forever. The scheduler will call the same
+services without touching `index.ts` at all.
+
+### 4. How the search works
+
+```ts
+matches(job) = matchesAnyKeyword(job, criteria.keywords) && matchesAnyLocation(job, criteria.locations)
+```
+
+- **Keywords** are OR-ed and checked against `title + description + skills`, case-insensitively.
+- **Locations** are OR-ed and matched as substrings of `job.location`, so `"Saudi Arabia"` matches
+  `"Riyadh, Saudi Arabia"` and `"Remote"` matches `"Remote"`.
+- An empty array means "no filter" — `{ keywords: [], locations: [] }` returns every job.
+- Matching is **whole-word**, not plain `includes`, so `"AI"` does not match `"m-ai-ntain"` and `"Java"` does not
+  match `"JavaScript"`.
+- `searchJobs` is `async` with 50 ms of fake latency, so callers are forced to treat job search as real I/O, and it
+  returns **copies** so no caller can corrupt the fixture.
+
+An honest limitation you will see in the output: the Java role matches, because its description contains the
+sentence "does not involve frontend or JavaScript work" — and `JavaScript` is one of your keywords. Keyword search
+has no idea what a sentence *means*. That is precisely the gap the LLM closes in Phase 4, and why Phase 3 adds
+scoring instead of a simple yes/no filter.
 
 ### 5. How to run it
+
+Use the scripts that already exist from Phase 1 — no new tooling:
 
 ```bash
 git pull
 npm install
-npm run agent
+npm run agent     # run once
+npm run dev       # run and restart on file changes
+npm test          # run the unit tests (node:test via tsx)
+npm run typecheck # type-check only
 ```
 
 ### 6. Expected output
 
 ```text
-... [INFO] AI Job Agent starting (Phase 2)
-... [INFO] Searching jobs via "mock" provider...
-... [INFO] Found 20 jobs
-... [INFO] - Senior Frontend Engineer (Angular) | Nour Tech | Riyadh, Saudi Arabia | SAR 25,000 - 32,000 / month
-... [INFO] - Full Stack Developer (React + Node.js) | Cloudline | Remote | Salary information unavailable
-... (18 more, including 4 duplicates at the end)
-... [INFO] Phase 2 complete: job model and job search provider are working
+... [INFO] 🤖 AI Job Agent starting...
+... [INFO] 👤 Profile: Abdul Basith (8 years experience)
+... [INFO] 🔎 Searching mock jobs via "mock" provider...
+... [INFO] 🔍 Keywords: Angular, React, TypeScript, JavaScript, Node.js, Full Stack, AI
+... [INFO] 📍 Locations: Saudi Arabia, Remote
+... [INFO] ✅ Found 11 jobs
+... [INFO] 📋 Jobs found:
+
+1. Senior Angular Developer
+   Company: Nour Technologies
+   Location: Riyadh, Saudi Arabia
+   Skills: Angular, TypeScript, RxJS, REST API
+   Salary: SAR 22,000 - 28,000 / month
+   URL: https://example.com/job/1
+
+2. Full Stack Developer (React + Node.js)
+   Company: Cloudline Solutions
+   Location: Remote
+   Skills: React, Node.js, TypeScript, PostgreSQL, Docker
+   Salary: USD 4,500 - 6,000 / month
+   URL: https://example.com/job/2
+
+... 9 more
 ```
 
-Note the second line: the job has no salary, and the output says so instead of guessing.
+11 of 12, because the Python ML role in Remote matches no keyword. The criteria come from
+`config/profile.json`, not from hardcoded values in `index.ts` — change the profile and the search changes.
 
-### 7. How to test it
+### 7. Tests
 
-1. `npm run agent` → 20 jobs listed, the last four repeating earlier titles.
-2. `MAX_JOBS_PER_SEARCH=5` in `.env` → `Found 5 jobs`.
-3. `JOB_PROVIDER=indeed` in `.env` → `[ERROR] Agent failed: Unsupported JOB_PROVIDER "indeed". Supported values: mock`.
-   Bad configuration fails loudly and early.
-4. `LOG_LEVEL=debug` → you also see the criteria the provider received.
+`npm test` runs 12 tests in `tests/mockJobSearchService.test.ts`, using Node's built-in test runner (`node:test`) —
+no Jest or Vitest dependency needed:
 
-Automated tests for duplicate detection and ranking arrive with Phase 3.
+| Test | Checks |
+|------|--------|
+| keyword matching | searching `Angular` returns only jobs mentioning Angular |
+| case-insensitive | `angular` and `ANGULAR` return identical results |
+| location matching | `Saudi Arabia` returns only Saudi jobs |
+| multiple keywords | `React` OR `Node.js` returns jobs matching either |
+| no results | `COBOL_XYZ` returns `[]` |
+| keyword AND location | `Angular` + `Remote` never returns an on-site job |
+| whole-word matching | `Java` does not match `JavaScript` |
+| empty criteria | returns all 12 jobs |
+| immutability | mutating a returned job does not affect later searches |
+| constructor injection | a custom job list can be searched |
+| `normalizeJobUrl()` | casing / `www.` / query / trailing slash collapse to one key |
+| `formatSalary()` | a missing salary never gets invented |
+
+### 8. The important concept: why the interface exists
+
+```ts
+interface JobSearchService {
+  searchJobs(criteria: JobSearchCriteria): Promise<Job[]>;
+}
+```
+
+Today:
+
+```text
+index.ts → JobSearchService (interface) → MockJobSearchService → src/data/mockJobs.ts
+```
+
+Later:
+
+```text
+index.ts → JobSearchService (interface) → RealJobSearchService  → HTTP → job API
+```
+
+Nothing above the interface changes. To add a real provider you write one new class that implements
+`searchJobs()`, add one `case` to `jobSearchServiceFactory.ts`, and set `JOB_PROVIDER=real` in `.env`. The agent
+workflow, the AI evaluation, the database and the email code never learn where jobs come from. (The `default` branch
+of the factory assigns to `never`, so if you extend the provider union and forget to handle it, the build fails
+instead of failing at 9 AM.)
+
+This is the same trick we will use for the LLM (`AI_PROVIDER=mock | openai | ollama`) and for email — it is how you
+keep a system testable without paying for API calls.
 
 ### Your Phase 2 exercise
 
-Write a throwaway script `scratch.ts` in the project root and run it with `npx tsx scratch.ts`:
-
-```ts
-import { normalizeJobUrl } from './src/models/job';
-
-console.log(normalizeJobUrl('https://JOBS.example.com/cloudline/fullstack-react-node/'));
-console.log(normalizeJobUrl('https://jobs.example.com/cloudline/fullstack-react-node'));
-console.log(normalizeJobUrl('https://www.jobs.example.com/marsad-ai/lead-fullstack-ai'));
-```
-
-1. Confirm the first two print **the same** string.
-2. Now count how many *unique* jobs the mock returns: import `MOCK_JOBS`, map every job through `normalizeJobUrl`,
-   put them in a `new Set(...)` and print `set.size`. You should get **16**.
-3. Question to answer for yourself: `index.ts` never imports `MockJobSearchService`. Why is that a good thing, and
-   what exactly would you have to change to add a real job board in Phase 4+?
-
-Delete `scratch.ts` afterwards — Phase 3 replaces it with real automated tests.
+1. Search only Riyadh: temporarily set `"preferredLocations": ["Riyadh"]` in `config/profile.json` and run
+   `npm run agent`. How many jobs come back? Put the value back afterwards.
+2. Add a 13th job to `src/data/mockJobs.ts` — a "Vue.js Developer" in Jeddah. Run `npm run agent`: it should **not**
+   appear (Vue is not in your keywords). Now add `"Vue"` to `keywords` in the profile and confirm it appears.
+3. Add one test to `tests/mockJobSearchService.test.ts`: searching `["Spring Boot"]` returns exactly one job. Run
+   `npm test`.
+4. Question to answer for yourself: `index.ts` never imports `MockJobSearchService`. Why is that good, and exactly
+   which files would you change to plug in a real job API?
 
 ---
 
@@ -370,5 +461,9 @@ debug, cheaper, and are what most production "AI agents" actually are. We can ad
 
 ## Next
 
-Say **"Next"** and we move to **Phase 3: duplicate detection and deterministic job ranking** (still no LLM — first
-we build a baseline ranking we can compare the AI against, plus the first automated tests).
+Phase 2 completed.
+
+Next phase: **Phase 3 — Job Matching and User Profile** (deterministic scoring against the profile plus duplicate
+detection, still with no LLM, so we have a baseline to compare the AI against in Phase 4).
+
+Say **"Next"** when you are ready.

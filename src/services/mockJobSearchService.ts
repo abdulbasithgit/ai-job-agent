@@ -1,31 +1,52 @@
+import { MOCK_JOBS } from '../data/mockJobs';
 import type { Job, JobSearchCriteria } from '../models/job';
 import type { JobSearchService } from './jobSearchService';
-import { MOCK_JOBS } from './mockJobs';
-import type { Logger } from '../utils/logger';
 
 /**
- * Returns a fixed set of sample postings, like a noisy real job board:
- * some are great matches, some are irrelevant, and four are duplicates.
- * It intentionally does NOT filter or rank — that is the agent's job (Phase 3+).
+ * Searches a fixed list of sample postings instead of a real job board, so the
+ * whole agent can be run offline, instantly and for free.
  */
 export class MockJobSearchService implements JobSearchService {
   readonly name = 'mock';
 
-  constructor(private readonly logger: Logger) {}
+  constructor(private readonly jobs: Job[] = MOCK_JOBS) {}
 
   async searchJobs(criteria: JobSearchCriteria): Promise<Job[]> {
-    this.logger.debug('Mock provider received criteria', {
-      keywords: criteria.keywords,
-      locations: criteria.locations,
-      limit: criteria.limit,
-    });
-
-    // Simulate network latency so callers are forced to treat this as async I/O.
+    // Simulate network latency so callers must treat job search as real I/O.
     await delay(50);
 
-    const jobs = MOCK_JOBS.map(cloneJob);
-    return criteria.limit === undefined ? jobs : jobs.slice(0, criteria.limit);
+    return this.jobs
+      .filter(
+        (job) => matchesAnyKeyword(job, criteria.keywords) && matchesAnyLocation(job, criteria.locations),
+      )
+      .map(cloneJob);
   }
+}
+
+/** A job matches when at least one keyword appears in its title, description or skills. */
+function matchesAnyKeyword(job: Job, keywords: string[]): boolean {
+  if (keywords.length === 0) return true;
+  const haystack = [job.title, job.description, ...job.skills].join(' ');
+  return keywords.some((keyword) => containsWord(haystack, keyword));
+}
+
+/** A job matches when at least one requested location appears in its location text. */
+function matchesAnyLocation(job: Job, locations: string[]): boolean {
+  if (locations.length === 0) return true;
+  const jobLocation = job.location.toLowerCase();
+  return locations.some((location) => jobLocation.includes(location.trim().toLowerCase()));
+}
+
+/**
+ * Case-insensitive whole-word match. Word-based (not plain `includes`) so that
+ * "AI" does not match "maintain" and "Java" does not match "JavaScript".
+ */
+function containsWord(text: string, word: string): boolean {
+  const trimmed = word.trim();
+  if (trimmed === '') return false;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, 'i');
+  return pattern.test(text);
 }
 
 function cloneJob(job: Job): Job {
