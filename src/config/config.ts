@@ -5,11 +5,14 @@ import { parseUserProfile, type UserProfile } from '../models/userProfile';
 
 dotenv.config();
 
+export type JobProvider = 'mock';
+
 export interface AppConfig {
   nodeEnv: string;
   logLevel: string;
   userProfilePath: string;
   userProfile: UserProfile;
+  jobProvider: JobProvider;
 }
 
 export function loadConfig(): AppConfig {
@@ -25,7 +28,14 @@ export function loadConfig(): AppConfig {
     logLevel,
     userProfilePath,
     userProfile: loadUserProfile(userProfilePath),
+    jobProvider: parseJobProvider(process.env.JOB_PROVIDER),
   };
+}
+
+function parseJobProvider(value: string | undefined): JobProvider {
+  const provider = (value ?? 'mock').trim().toLowerCase();
+  if (provider === 'mock') return 'mock';
+  throw new Error(`Unsupported JOB_PROVIDER "${provider}". Supported values: mock`);
 }
 
 function loadUserProfile(filePath: string): UserProfile {
