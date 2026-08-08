@@ -1,0 +1,31 @@
+{
+  "name": "Abdul Basith",
+  "skills": [
+    "Angular",
+    "React",
+    "TypeScript",
+    "JavaScript",
+    "Node.js",
+    "HTML",
+    "CSS",
+    "REST API",
+    "Docker"
+  ],
+  "preferredLocations": ["Saudi Arabia", "Remote"],
+  "experienceYears": 8,
+  "preferredRoles": [
+    "Senior Software Engineer",
+    "Senior Frontend Developer",
+    "Full Stack Developer",
+    "AI Full Stack Developer"
+  ],
+  "keywords": [
+    "Angular",
+    "React",
+    "TypeScript",
+    "JavaScript",
+    "Node.js",
+    "Full Stack",
+    "AI"
+  ]
+}
